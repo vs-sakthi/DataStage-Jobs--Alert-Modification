@@ -1,0 +1,361 @@
+#exit 0
+
+#!/usr/bin/ksh
+###################################################################################
+#                               
+#      
+#
+#
+#  Script  Name:AlertJobModifications.sh
+#
+#  Description : This script checks for Job Modifications in DataStage Project Directory
+#                and sends report to Users via email.
+#
+#
+#  Parameters  : < DataStage Project Name>
+#
+#
+#  Change Log
+#
+#  Changed By            Date           Description
+#  -----------------     ---------      -----------------------------
+#  Sakthivel V      2013-03-11       Initial
+######################################################################################
+
+set -x
+
+if [ $# -ne 1 ]
+then
+echo " Usage : Incorrect Paraneters Passed < DataStage Project Name > "
+exit 1
+fi
+
+Project_Name=$1
+
+
+##########Give the respective path################################
+TargetprojDir=Target path
+FileDir=path
+ScriptDir=Script path
+
+FromEmailId="From mail id"
+ToEmailId="to mail id"
+
+
+. `cat /.dshome`/dsenv
+CMD=`cat /.dshome`/bin
+JOBDT_FL=`date +%m%d%Y%H%M%S`
+cat /dev/null > $FileDir/MailTextFile.txt
+
+##Log=AutoJobModificationAlert.log
+Abort_Log=AutoJobMoficationAbort.log
+
+#################################################################################### 
+#Step:1- Running DataStage job for retreiving Jobs List and Job Id    
+####################################################################################
+
+echo " Process Job Started:  `date` \n"  
+
+$CMD/dsjob -run -warn 0 -wait $Project_Name Modification_ODBC
+
+###################################################################################
+#Step 2: Checking the job status: 
+###################################################################################
+
+jobstatus=$($CMD/dsjob -jobinfo  $Project_Name Modification_ODBC | head -1 | awk '{print $4 $5}')
+
+echo $jobstatus 
+
+if [[ $jobstatus = "RUNOK" || $jobstatus = "RUNwith" ]]
+	then
+	echo " Job Number Extraction job sequence completed  : `date `\n" 
+	else
+        echo "Job 'Modification_ODBC' got Aborted in Project  $Project_Name. Please Check the Log." > $FileDir/$Abort_Log
+	mailx -r "$FromEmailId" -s "AlertJobModifications.sh Stopped: Modification_ODBC job Aborted !! `date` \n"  $ToEmailId < $FileDir/$Abort_Log
+        rm $FileDir/$Abort_Log
+	exit 1
+fi
+
+touch $FileDir/modified_directories.txt
+touch $FileDir/modified_Scripts.txt
+touch $FileDir/modified_directories_New.txt
+touch $FileDir/modified_Scripts_New.txt
+touch $FileDir/modify_script_dup.txt
+touch $FileDir/modify_job_dup.txt
+touch $FileDir/modify_job_List.txt
+touch $FileDir/modify_script_List.txt
+touch $FileDir/modify_List_bkp.txt
+touch $FileDir/modify_List_dup_bkp.txt
+touch $FileDir/MailTextFile.txt
+
+chmod 775 $FileDir/modified_directories.txt
+chmod 775 $FileDir/modified_Scripts.txt
+chmod 775 $FileDir/modified_directories_New.txt
+chmod 775 $FileDir/modified_Scripts_New.txt
+chmod 775 $FileDir/modify_script_dup.txt
+chmod 775 $FileDir/modify_job_dup.txt
+chmod 775 $FileDir/modify_job_List.txt
+chmod 775 $FileDir/modify_script_List.txt
+chmod 775 $FileDir/modify_List_bkp.txt
+chmod 775 $FileDir/modify_List_dup_bkp.txt
+chmod 775 $FileDir/MailTextFile.txt
+
+################################################################################### 
+#Step 3:- Retreiving Directory List Of modified Jobs and Scripts:  
+################################################################################### 
+
+find /IISProjects/fscd/$Project_Name -maxdepth 2 -mindepth 2  -type f -mmin -240 -exec ls -ltr {} \; |grep "RT_BP" |grep -v '/\.'|grep -v 'jpfile'|awk -F " " '{print $3,$6,$7,$8,$9,$10}' > $FileDir/modified_directories.txt
+
+find /IISProjects/fscd/$Project_Name -maxdepth 2 -mindepth 2  -type f -mmin -240 -exec ls -ltr {} \; |grep "RT_SC" |grep -v '/\.'|grep -v 'jpfile'|awk -F " " '{print $3,$6,$7,$8,$9,$10}' >> $FileDir/modified_directories.txt
+
+find $ScriptDir -maxdepth 1 -mindepth 1 -type f -name "*.sh" -mmin -240 -exec ls -ltr {} \; |grep -v '/\.'|awk -F " " '{print $3,$6,$7,$8,$9,$10}' > $FileDir/modified_Scripts.txt
+
+awk '!x[$0]++' $FileDir/modified_directories.txt > $FileDir/modified_directories_New.txt
+
+awk '!x[$0]++' $FileDir/modified_Scripts.txt > $FileDir/modified_Scripts_New.txt
+
+###################################################################################
+#Step 4:- Retrieving job names from ds job target file:
+###################################################################################
+
+chmod 777 $FileDir/Jobs_no_latest.txt
+
+cat $FileDir/modified_directories_New.txt | while read LINE
+        do
+        Server_job_no=`echo $LINE|awk -F "/" '{print $5}' | tr -d "\n"`
+        User_Modified=`echo $LINE|awk -F " " '{print $1}' | tr -d "\n"`
+        Modified_Date=`echo $LINE|awk -F " " '{print $2,$3,$4}' | tr -d "\n"`
+        job_name=`grep -w "$Server_job_no" $FileDir/Jobs_no_latest.txt|awk -F  "," '{print $1} | tr -d "\n"'`
+        Ser_Len=`expr length $job_name`
+if [[ $Ser_Len -ge 1 ]]; then
+        echo -e "$job_name | $User_Modified | $Modified_Date" >> $FileDir/modify_job_dup.txt
+fi
+        done
+cat $FileDir/modified_directories_New.txt | while read LINE
+        do
+        Parallel_job_no=`echo $LINE|awk -F "/" '{print $5}' | tr -d "\n"`
+        Par_User_Modified=`echo $LINE|awk -F " " '{print $1}' | tr -d "\n"`
+        Par_Modified_Date=`echo $LINE|awk -F " " '{print $2,$3,$4}' | tr -d "\n"`
+        job_name=`grep -w "$Parallel_job_no" $FileDir/Jobs_no_latest.txt|awk -F  "," '{print $1}'| tr -d "\n"`
+        Len=`expr length $job_name`
+if [[ $Len -ge 1 ]]; then
+         echo -e "$job_name | $Par_User_Modified | $Par_Modified_Date" >> $FileDir/modify_job_dup.txt
+fi
+        done
+cat $FileDir/modified_Scripts_New.txt | while read LINE
+        do
+        Script_name=`echo $LINE|awk -F "/" '{print $7}' | tr -d "\n"`
+        User_Modified=`echo $LINE|awk -F " " '{print $1}' | tr -d "\n"`
+        Modified_Date=`echo $LINE|awk -F " " '{print $2,$3,$4}' | tr -d "\n"`
+        echo -e "$Script_name | $User_Modified | $Modified_Date" >> $FileDir/modify_script_dup.txt
+        done
+
+awk -F "|" '!arr[$1]++' $FileDir/modify_job_dup.txt > $FileDir/modify_job_List.txt
+
+awk -F "|" '!arr[$1]++' $FileDir/modify_script_dup.txt > $FileDir/modify_script_List.txt
+
+sed -i '/^$/d' $FileDir/modify_job_List.txt
+
+sed -i '/^$/d' $FileDir/modify_script_List.txt
+
+###################################################################################
+#Step 5:- Taking Back_up file for the list of jobs modified
+##################################################################################
+
+cat $FileDir/modify_job_List.txt >> $FileDir/modify_List_bkp.txt
+
+cat $FileDir/modify_script_List.txt >> $FileDir/modify_List_bkp.txt
+
+awk '!x[$0]++' $FileDir/modify_List_bkp.txt >> $FileDir/modify_List_dup_bkp.txt
+
+cat $FileDir/modify_List_dup_bkp.txt > $FileDir/modify_List_bkp.txt
+
+sed -i '/^$/d' $FileDir/modify_List_bkp.txt
+
+###################################################################################
+#Step 6:- Sending mail Notification with list of jobs modified
+##################################################################################
+
+Count=`cat $FileDir/modify_job_List.txt |wc -l`
+
+Count_1=`cat $FileDir/modify_script_List.txt |wc -l`
+#Count=0
+#Count_1=0
+if [[ $Count -ge 1 ]] && [[ $Count_1 -ge 1 ]]; then
+FromDate=`date +%H:%M -d 'now - 4 hours'`
+
+export MAILTO="${ToEmailId}"
+export MAILFROM="${FromEmailId}"
+export SUBJECT="Jobs And Scripts Modification Alert-$Project_Name B/W $FromDate and `date +%H:%M` Hrs EST [ `date +%d-%m-%y` ]"
+(
+ echo "From: ${MAILFROM}"
+ echo "To: ${MAILTO}"
+ echo "Subject: $SUBJECT"
+ echo "MIME-Version: 1.0"
+ echo "Content-Type: text/html"
+ echo " <!DOCTYPE html>
+        <html>
+        <body>
+
+        <p>Hi Team</p>
+        <p>Please Find Below the List Of Jobs/Scripts got Modified in ${Project_Name} Between ${FromDate} and `date +%H:%M` Hrs EST Today [ `date +%d-%m-%y` ]</p>
+      
+        <table border="1" align=left>
+        <tr bgcolor="#38ACEC">
+          <td>Job_Name</td>
+          <td>User_Modified</td>
+          <td>Modified_Date</td>
+          </tr>
+        <tr>
+          <td><pre>`cat $FileDir/modify_job_List.txt | awk -F "|" '{print $1}'`</pre></td>
+          <td><pre>`cat $FileDir/modify_job_List.txt | awk -F "|" '{print $2}'`</pre></td>
+          <td><pre>`cat $FileDir/modify_job_List.txt | awk -F "|" '{print $3}'`</pre></td>
+        </tr>
+        </table>
+       <br>
+       <br>
+       <br>
+       <br><br>
+        <table border="1" align=left>
+        <tr bgcolor="#38ACEC">
+          <td>Script_Name</td>
+          <td>User_Modified</td>
+          <td>Modified_Date</td>
+          </tr>
+        <tr>
+          <td><pre>`cat $FileDir/modify_script_List.txt | awk -F "|" '{print $1}'`</pre></td>
+          <td><pre>`cat $FileDir/modify_script_List.txt | awk -F "|" '{print $2}'`</pre></td>
+          <td><pre>`cat $FileDir/modify_script_List.txt | awk -F "|" '{print $3}'`</pre></td>
+        </tr>
+        </table>
+        <br>
+        <br>
+        <br>
+       <br><br>
+        <p>This is an automatic email. Please don't reply to the email.</p>
+        <p>Thanks & Regards.</p>
+        <p>DI Team</p>
+        </body>
+        </html>"
+) | /usr/lib/sendmail -t
+else
+if [[ $Count -ge 1 ]]; then
+
+FromDate=`date +%H:%M -d 'now - 4 hours'`
+
+export MAILTO="${ToEmailId}"
+export MAILFROM="${FromEmailId}"
+export SUBJECT="Jobs Modification Alert-$Project_Name B/W $FromDate and `date +%H:%M` Hrs EST [ `date +%d-%m-%y` ]"
+(
+ echo "From: ${MAILFROM}"
+ echo "To: ${MAILTO}"
+ echo "Subject: $SUBJECT"
+ echo "MIME-Version: 1.0"
+ echo "Content-Type: text/html"
+ echo " <!DOCTYPE html>
+        <html>
+        <body>
+
+        <p>Hi Team</p>
+        <p>Please Find Below the List Of Jobs got Modified in ${Project_Name} Between ${FromDate} and `date +%H:%M` Hrs EST Today [ `date +%d-%m-%y` ]</p>
+
+	<table border="1" align=left>
+        <tr bgcolor="#38ACEC">
+          <td>Job_Name</td>
+          <td>User_Modified</td>
+          <td>Modified_Date</td>
+          </tr>
+        <tr>
+          <td><pre>`cat $FileDir/modify_job_List.txt | awk -F "|" '{print $1}'`</pre></td>
+          <td><pre>`cat $FileDir/modify_job_List.txt | awk -F "|" '{print $2}'`</pre></td>
+          <td><pre>`cat $FileDir/modify_job_List.txt | awk -F "|" '{print $3}'`</pre></td>
+        </tr>
+        </table>
+        <br>
+        <br>
+	<br>
+        <br>
+         <br><br>
+        <p>This is an automatic email. Please don't reply to the email.</p>
+        <p>Thanks & Regards.</p>
+        <p>DI Team</p>
+        </body>
+        </html>"
+) | /usr/lib/sendmail -t
+else
+if [[ $Count_1 -ge 1 ]]; then
+
+export MAILTO="${ToEmailId}"
+export MAILFROM="${FromEmailId}"
+export SUBJECT="Scripts Modification Alert-$Project_Name B/W $FromDate and `date +%H:%M` Hrs EST [ `date +%d-%m-%y` ]"
+(
+ echo "From: ${MAILFROM}"
+ echo "To: ${MAILTO}"
+ echo "Subject: $SUBJECT"
+ echo "MIME-Version: 1.0"
+ echo "Content-Type: text/html"
+ echo " <!DOCTYPE html>
+        <html>
+        <body>
+
+        <p>Hi Team</p>
+        <p>Please Find Below the List Of Scripts got Modified in ${Project_Name} Between ${FromDate} and `date +%H:%M` Hrs EST Today [ `date +%d-%m-%y` ]</p>
+  
+
+        <table border="1" align=left>
+        <tr bgcolor="#38ACEC">
+          <td>Script_Name</td>
+          <td>User_Modified</td>
+          <td>Modified_Date</td>
+          </tr>
+        <tr>
+          <td><pre>`cat $FileDir/modify_script_List.txt | awk -F "|" '{print $1}'`</pre></td>
+          <td><pre>`cat $FileDir/modify_script_List.txt | awk -F "|" '{print $2}'`</pre></td>
+          <td><pre>`cat $FileDir/modify_script_List.txt | awk -F "|" '{print $3}'`</pre></td>
+        </tr>
+        </table>
+        <br>
+        <br>
+        <br>
+        <br><br>
+        <p>This is an automatic email. Please don't reply to the email.</p>
+<p>Thanks & Regards.</p>
+        <p>DI Team</p>
+        </body>
+        </html>"
+) | /usr/lib/sendmail -t
+fi
+fi
+fi
+
+###################################################################################
+#Step 7:- Copying the 15 days old job list files to archive folder
+##################################################################################
+
+fiffteenth_day=`cal | tr ' ' '\n' | grep -v '^$' | sed -n 24p`
+current_date=$(date +%d)
+if [[ $fiffteenth_day -eq $current_date ]]
+then
+mv  $FileDir/modify_List_bkp.txt path/modify_List_bkp_$(date +%m%d%Y).txt
+echo "15 Day job list jobs moved to archive dir"
+else
+echo "File is not moved"
+fi
+
+###################################################################################
+#Step 8:- Removing Temp Files
+##################################################################################
+
+rm $FileDir/modified_directories.txt
+rm $FileDir/modified_directories_New.txt
+rm $FileDir/modify_job_dup.txt
+rm $FileDir/modify_job_List.txt
+rm $FileDir/MailTextFile.txt
+rm $FileDir/modified_Scripts.txt
+rm $FileDir/modified_Scripts_New.txt
+rm $FileDir/modify_script_dup.txt
+rm $FileDir/modify_script_List.txt
+rm $FileDir/modify_List_dup_bkp.txt
+rm $FileDir/Jobs_no_latest.txt
+
+exit 0
