@@ -7,4 +7,4 @@ This unix script used to get the modified datastage parallel jobs for every four
 
 This script checks for Job Modifications in DataStage Project Directory and sends report to Users via email.
 
-Parameter need to pass is Datastage Project name which is nothing buth the actaul direcoty name.
+Parameter need to pass is Datastage Project name which is nothing but the actaul directory name.
